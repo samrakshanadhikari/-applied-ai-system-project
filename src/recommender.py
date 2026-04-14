@@ -1,6 +1,17 @@
 import csv
-from typing import List, Dict, Tuple, Optional
 from dataclasses import dataclass
+from typing import Dict, List, Tuple
+
+DEFAULT_WEIGHTS = {
+    "favorite_genre": 2.0,
+    "secondary_genre": 1.0,
+    "favorite_mood": 1.5,
+    "target_energy": 2.0,
+    "target_tempo_bpm": 1.5,
+    "target_valence": 1.5,
+    "target_danceability": 1.0,
+    "target_acousticness": 1.0,
+}
 
 @dataclass
 class Song:
@@ -91,8 +102,17 @@ def _tempo_score(song_tempo: float, target_tempo: float, weight: float) -> float
     return similarity * weight
 
 
-def score_song_from_profile(user_prefs: Dict, song: Dict) -> Tuple[float, List[str]]:
+def score_song_from_profile(
+    user_prefs: Dict,
+    song: Dict,
+    weights: Dict[str, float] | None = None,
+    use_mood: bool = True,
+) -> Tuple[float, List[str]]:
     """Score one song against a profile and collect matching reasons."""
+    active_weights = DEFAULT_WEIGHTS.copy()
+    if weights:
+        active_weights.update(weights)
+
     score = 0.0
     reasons: List[str] = []
 
@@ -101,41 +121,54 @@ def score_song_from_profile(user_prefs: Dict, song: Dict) -> Tuple[float, List[s
     favorite_mood = user_prefs.get("favorite_mood")
 
     if favorite_genre and song.get("genre") == favorite_genre:
-        score += 2.0
-        reasons.append("genre match (+2.0)")
+        genre_points = active_weights["favorite_genre"]
+        score += genre_points
+        reasons.append(f"genre match (+{genre_points:.1f})")
     elif secondary_genre and song.get("genre") == secondary_genre:
-        score += 1.0
-        reasons.append("secondary genre match (+1.0)")
+        secondary_points = active_weights["secondary_genre"]
+        score += secondary_points
+        reasons.append(f"secondary genre match (+{secondary_points:.1f})")
 
-    if favorite_mood and song.get("mood") == favorite_mood:
-        score += 1.5
-        reasons.append("mood match (+1.5)")
+    if use_mood and favorite_mood and song.get("mood") == favorite_mood:
+        mood_points = active_weights["favorite_mood"]
+        score += mood_points
+        reasons.append(f"mood match (+{mood_points:.1f})")
 
     if "target_energy" in user_prefs and "energy" in song:
-        energy_points = _closeness_score(song["energy"], user_prefs["target_energy"], 2.0)
+        energy_points = _closeness_score(
+            song["energy"], user_prefs["target_energy"], active_weights["target_energy"]
+        )
         score += energy_points
         reasons.append(f"energy similarity (+{energy_points:.2f})")
 
     if "target_tempo_bpm" in user_prefs and "tempo_bpm" in song:
-        tempo_points = _tempo_score(song["tempo_bpm"], user_prefs["target_tempo_bpm"], 1.5)
+        tempo_points = _tempo_score(
+            song["tempo_bpm"], user_prefs["target_tempo_bpm"], active_weights["target_tempo_bpm"]
+        )
         score += tempo_points
         reasons.append(f"tempo similarity (+{tempo_points:.2f})")
 
     if "target_valence" in user_prefs and "valence" in song:
-        valence_points = _closeness_score(song["valence"], user_prefs["target_valence"], 1.5)
+        valence_points = _closeness_score(
+            song["valence"], user_prefs["target_valence"], active_weights["target_valence"]
+        )
         score += valence_points
         reasons.append(f"valence similarity (+{valence_points:.2f})")
 
     if "target_danceability" in user_prefs and "danceability" in song:
         danceability_points = _closeness_score(
-            song["danceability"], user_prefs["target_danceability"], 1.0
+            song["danceability"],
+            user_prefs["target_danceability"],
+            active_weights["target_danceability"],
         )
         score += danceability_points
         reasons.append(f"danceability similarity (+{danceability_points:.2f})")
 
     if "target_acousticness" in user_prefs and "acousticness" in song:
         acousticness_points = _closeness_score(
-            song["acousticness"], user_prefs["target_acousticness"], 1.0
+            song["acousticness"],
+            user_prefs["target_acousticness"],
+            active_weights["target_acousticness"],
         )
         score += acousticness_points
         reasons.append(f"acousticness similarity (+{acousticness_points:.2f})")
@@ -143,9 +176,14 @@ def score_song_from_profile(user_prefs: Dict, song: Dict) -> Tuple[float, List[s
     return score, reasons
 
 
-def score_song(user_prefs: Dict, song: Dict) -> Tuple[float, List[str]]:
+def score_song(
+    user_prefs: Dict,
+    song: Dict,
+    weights: Dict[str, float] | None = None,
+    use_mood: bool = True,
+) -> Tuple[float, List[str]]:
     """Return a song's score and explanation list for a user profile."""
-    return score_song_from_profile(user_prefs, song)
+    return score_song_from_profile(user_prefs, song, weights=weights, use_mood=use_mood)
 
 def load_songs(csv_path: str) -> List[Dict]:
     """Load songs from CSV into dictionaries with numeric fields parsed."""
@@ -171,12 +209,18 @@ def load_songs(csv_path: str) -> List[Dict]:
 
     return songs
 
-def recommend_songs(user_prefs: Dict, songs: List[Dict], k: int = 5) -> List[Tuple[Dict, float, str]]:
+def recommend_songs(
+    user_prefs: Dict,
+    songs: List[Dict],
+    k: int = 5,
+    weights: Dict[str, float] | None = None,
+    use_mood: bool = True,
+) -> List[Tuple[Dict, float, str]]:
     """Return the highest-scoring songs with scores and explanations."""
     scored_recommendations: List[Tuple[Dict, float, str]] = []
 
     for song in songs:
-        score, reasons = score_song(user_prefs, song)
+        score, reasons = score_song(user_prefs, song, weights=weights, use_mood=use_mood)
         explanation = "; ".join(reasons)
         scored_recommendations.append((song, score, explanation))
 
