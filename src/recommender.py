@@ -39,6 +39,7 @@ class Recommender:
         self.songs = songs
 
     def recommend(self, user: UserProfile, k: int = 5) -> List[Song]:
+        """Return the top-k songs ranked for the given user."""
         scored_songs = sorted(
             self.songs,
             key=lambda song: score_song_from_profile(
@@ -60,6 +61,7 @@ class Recommender:
         return scored_songs[:k]
 
     def explain_recommendation(self, user: UserProfile, song: Song) -> str:
+        """Return a short explanation for why a song matches the user."""
         _, reasons = score_song_from_profile(
             {
                 "favorite_genre": user.favorite_genre,
@@ -78,16 +80,19 @@ class Recommender:
 
 
 def _closeness_score(song_value: float, target_value: float, weight: float) -> float:
+    """Convert numeric similarity into weighted recommendation points."""
     similarity = max(0.0, 1.0 - abs(song_value - target_value))
     return similarity * weight
 
 
 def _tempo_score(song_tempo: float, target_tempo: float, weight: float) -> float:
+    """Score tempo closeness using a wider BPM distance scale."""
     similarity = max(0.0, 1.0 - abs(song_tempo - target_tempo) / 100.0)
     return similarity * weight
 
 
 def score_song_from_profile(user_prefs: Dict, song: Dict) -> Tuple[float, List[str]]:
+    """Score one song against a profile and collect matching reasons."""
     score = 0.0
     reasons: List[str] = []
 
@@ -139,16 +144,11 @@ def score_song_from_profile(user_prefs: Dict, song: Dict) -> Tuple[float, List[s
 
 
 def score_song(user_prefs: Dict, song: Dict) -> Tuple[float, List[str]]:
-    """
-    Scores one song against a user profile and returns both the score and reasons.
-    """
+    """Return a song's score and explanation list for a user profile."""
     return score_song_from_profile(user_prefs, song)
 
 def load_songs(csv_path: str) -> List[Dict]:
-    """
-    Loads songs from a CSV file.
-    Required by src/main.py
-    """
+    """Load songs from CSV into dictionaries with numeric fields parsed."""
     songs: List[Dict] = []
 
     with open(csv_path, newline="", encoding="utf-8") as csv_file:
@@ -172,10 +172,7 @@ def load_songs(csv_path: str) -> List[Dict]:
     return songs
 
 def recommend_songs(user_prefs: Dict, songs: List[Dict], k: int = 5) -> List[Tuple[Dict, float, str]]:
-    """
-    Functional implementation of the recommendation logic.
-    Required by src/main.py
-    """
+    """Return the highest-scoring songs with scores and explanations."""
     scored_recommendations: List[Tuple[Dict, float, str]] = []
 
     for song in songs:
