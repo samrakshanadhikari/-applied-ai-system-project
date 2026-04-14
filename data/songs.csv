@@ -9,3 +9,10 @@ id,title,artist,genre,mood,energy,tempo_bpm,valence,danceability,acousticness
 8,Night Drive Loop,Neon Echo,synthwave,moody,0.75,110,0.49,0.73,0.22
 9,Focus Flow,LoRoom,lofi,focused,0.40,80,0.59,0.60,0.78
 10,Rooftop Lights,Indigo Parade,indie pop,happy,0.76,124,0.81,0.82,0.35
+11,4 Your Eyez Only,J. Cole,hip-hop,reflective,0.36,84,0.42,0.55,0.64
+12,FEAR.,Kendrick Lamar,hip-hop,anxious,0.44,79,0.30,0.58,0.52
+13,It Ain't Me Babe,Bob Dylan,folk,defiant,0.41,116,0.47,0.49,0.88
+14,Sad Eyed Lady of the Lowlands,Bob Dylan,folk,yearning,0.22,68,0.28,0.31,0.93
+15,Never Love Again,Eminem,hip-hop,heartbroken,0.57,90,0.18,0.61,0.33
+16,Diamonds & Rust,Joan Baez,folk,sentimental,0.33,102,0.46,0.44,0.94
+17,Come Here,Kath Bloom,indie folk,tender,0.18,63,0.39,0.27,0.97
