@@ -2,7 +2,9 @@
 
 ## Project Summary
 
-This project builds a CLI-first music recommender that scores songs from a CSV catalog against different user taste profiles. It uses genre, mood, energy, tempo, valence, danceability, and acousticness to rank songs, explain why they matched, and compare how the system behaves across very different listeners.
+This project builds a CLI-first music recommender that scores songs from a CSV catalog against different user taste profiles. It uses genre, mood, energy, tempo, valence, danceability, and acousticness to rank songs and explain why they matched.
+
+The project now also includes a prompt-based RAG pipeline: users can describe what they feel like listening to in natural language, the app retrieves candidates from a public music source (iTunes Search API) plus the local CSV catalog, applies semantic retrieval with a pretrained embedding model, and then generates grounded top-k recommendations using the shared ranking engine.
 
 ---
 
@@ -15,7 +17,23 @@ Features used in this simulation:
 - `Song` features: `genre`, `mood`, `energy`, `tempo_bpm`, `valence`, `danceability`, `acousticness`
 - `UserProfile` features: `favorite_genre`, `secondary_genre`, `favorite_mood`, `target_energy`, `target_tempo_bpm`, `target_valence`, `target_danceability`, `target_acousticness`
 
-The recommender now tests multiple profiles, including reflective hip-hop and folk, high-energy pop, chill lofi, deep intense rock, and one contradictory edge case. For each profile, it loops through every song in `data/songs.csv`, calculates a score, and returns the top `k` songs with the highest scores.
+The recommender now supports two integrated workflows:
+
+- **Profile evaluation mode**: tests multiple profiles, including reflective hip-hop and folk, high-energy pop, chill lofi, deep intense rock, and one contradictory edge case.
+- **Prompt-based RAG mode**: takes a free-text request (for example, "calm acoustic songs for study"), derives a profile, retrieves candidates from external + local sources, fuses semantic + lexical similarity, and ranks the top matches.
+
+For each workflow, it calculates a score for candidate songs and returns the top `k` songs with the highest scores.
+
+### Prompt-Based RAG Flow
+
+```mermaid
+flowchart LR
+    A[User prompt] --> B[Parse intent into profile targets]
+    B --> C[Retrieve songs from iTunes API and local CSV]
+    C --> D[Semantic and lexical retrieval fusion]
+    D --> E[Score and rank with shared recommender]
+    E --> F[Return top-k songs with explanations]
+```
 
 ### Data Flow
 
@@ -72,10 +90,34 @@ For the numerical features, the scoring rule rewards closeness rather than simpl
 pip install -r requirements.txt
 ```
 
-3. Run the app:
+3. Run the original profile demo:
 
 ```bash
 python -m src.main
+```
+
+4. Run prompt-based RAG mode:
+
+```bash
+python -m src.main --prompt "I want calm acoustic songs for late-night focus"
+```
+
+5. Run prompt mode interactively:
+
+```bash
+python -m src.main --interactive
+```
+
+6. Local-only fallback (disable external retrieval):
+
+```bash
+python -m src.main --prompt "happy workout pop tracks" --no-external
+```
+
+7. Lexical-only retrieval fallback (disable embeddings):
+
+```bash
+python -m src.main --prompt "lyrical rap songs" --lexical-only
 ```
 
 ### Running Tests
@@ -87,6 +129,15 @@ pytest
 ```
 
 You can add more tests in `tests/test_recommender.py`.
+
+RAG pipeline tests live in `tests/test_rag_recommender.py`.
+
+### Logging and Guardrails
+
+- Runtime logs are written to `logs/app.log`.
+- Empty prompt input is rejected with a clear error message.
+- External retrieval failures are handled safely; the app falls back to local data instead of crashing.
+- If semantic model loading fails, retrieval falls back to lexical matching.
 
 ---
 
