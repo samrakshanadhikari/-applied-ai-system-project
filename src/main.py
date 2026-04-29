@@ -9,6 +9,7 @@ from typing import Any, Dict
 
 from src.rag_recommender import (
     DEFAULT_EMBEDDING_MODEL,
+    agentic_recommend_from_prompt,
     recommend_from_prompt,
 )
 from src.recommender import load_songs, recommend_songs
@@ -118,6 +119,8 @@ def run_prompt_mode(
     songs,
     top_k: int,
     use_external_retrieval: bool,
+    use_agentic_workflow: bool = False,
+    follow_up_answer: str | None = None,
     prefer_semantic_retrieval: bool = True,
     embedding_model_name: str = DEFAULT_EMBEDDING_MODEL,
 ) -> Dict[str, Any]:
@@ -127,21 +130,33 @@ def run_prompt_mode(
         raise ValueError("Prompt cannot be empty.")
 
     LOGGER.info(
-        "Prompt mode start | prompt=%s | top_k=%d | external_retrieval=%s | semantic=%s",
+        "Prompt mode start | prompt=%s | top_k=%d | external_retrieval=%s | agentic=%s | semantic=%s",
         cleaned_prompt,
         top_k,
         use_external_retrieval,
+        use_agentic_workflow,
         prefer_semantic_retrieval,
     )
 
-    recommendations, diagnostics = recommend_from_prompt(
-        cleaned_prompt,
-        songs,
-        k=top_k,
-        use_external_retrieval=use_external_retrieval,
-        prefer_semantic_retrieval=prefer_semantic_retrieval,
-        embedding_model_name=embedding_model_name,
-    )
+    if use_agentic_workflow:
+        recommendations, diagnostics = agentic_recommend_from_prompt(
+            cleaned_prompt,
+            songs,
+            k=top_k,
+            use_external_retrieval=use_external_retrieval,
+            follow_up_answer=follow_up_answer,
+            prefer_semantic_retrieval=prefer_semantic_retrieval,
+            embedding_model_name=embedding_model_name,
+        )
+    else:
+        recommendations, diagnostics = recommend_from_prompt(
+            cleaned_prompt,
+            songs,
+            k=top_k,
+            use_external_retrieval=use_external_retrieval,
+            prefer_semantic_retrieval=prefer_semantic_retrieval,
+            embedding_model_name=embedding_model_name,
+        )
 
     print("\n=== Prompt-Based Recommendation (RAG Pipeline) ===")
     print(f"Prompt: {cleaned_prompt}")
@@ -158,6 +173,14 @@ def run_prompt_mode(
         f" external={diagnostics['external_catalog_size']},"
         f" retrieved={diagnostics['retrieved_candidate_size']}"
     )
+
+    if use_agentic_workflow:
+        print(f"Agentic confidence: {diagnostics['confidence_score']:.3f}")
+        print("Agentic plan:")
+        for step in diagnostics["agentic_plan"]:
+            print(f" - {step}")
+        if diagnostics.get("follow_up_question"):
+            print(f"Agent follow-up: {diagnostics['follow_up_question']}")
 
     print_recommendations("Top matches", recommendations)
     LOGGER.info("Prompt mode completed successfully.")
@@ -187,6 +210,11 @@ def parse_args() -> argparse.Namespace:
         "--no-external",
         action="store_true",
         help="Disable public API retrieval and use local catalog only.",
+    )
+    parser.add_argument(
+        "--agentic",
+        action="store_true",
+        help="Enable plan->retrieve->rank->self-check loop with follow-up question when confidence is low.",
     )
     parser.add_argument(
         "--lexical-only",
@@ -223,10 +251,22 @@ def main() -> None:
                 songs=songs,
                 top_k=max(args.top_k, 1),
                 use_external_retrieval=not args.no_external,
+                use_agentic_workflow=args.agentic,
                 prefer_semantic_retrieval=not args.lexical_only,
                 embedding_model_name=args.embedding_model,
             )
-            _ = diagnostics
+            if args.interactive and args.agentic and diagnostics.get("follow_up_question"):
+                follow_up_answer = input(f"{diagnostics['follow_up_question']} ")
+                run_prompt_mode(
+                    prompt=prompt,
+                    songs=songs,
+                    top_k=max(args.top_k, 1),
+                    use_external_retrieval=not args.no_external,
+                    use_agentic_workflow=True,
+                    follow_up_answer=follow_up_answer,
+                    prefer_semantic_retrieval=not args.lexical_only,
+                    embedding_model_name=args.embedding_model,
+                )
         except ValueError as exc:
             LOGGER.warning("Guardrail triggered: %s", exc)
             print(f"Input error: {exc}")

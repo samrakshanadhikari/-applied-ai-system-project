@@ -1,6 +1,7 @@
 import json
 
 from src.rag_recommender import (
+    agentic_recommend_from_prompt,
     build_profile_from_prompt,
     fetch_public_songs,
     recommend_from_prompt,
@@ -183,3 +184,45 @@ def test_recommend_from_prompt_local_mode_runs_end_to_end():
     assert diagnostics["external_catalog_size"] == 0
     assert diagnostics["retrieved_candidate_size"] >= 1
     assert recommendations[0][2]  # explanation string is non-empty
+
+
+def test_agentic_workflow_emits_follow_up_for_low_confidence():
+    local_songs = [
+        {
+            "id": 1,
+            "title": "Unknown Tone",
+            "artist": "Artist A",
+            "genre": "pop",
+            "mood": "happy",
+            "energy": 0.5,
+            "tempo_bpm": 100.0,
+            "valence": 0.5,
+            "danceability": 0.5,
+            "acousticness": 0.5,
+        },
+        {
+            "id": 2,
+            "title": "Random Echo",
+            "artist": "Artist B",
+            "genre": "rock",
+            "mood": "intense",
+            "energy": 0.5,
+            "tempo_bpm": 100.0,
+            "valence": 0.5,
+            "danceability": 0.5,
+            "acousticness": 0.5,
+        },
+    ]
+
+    recommendations, diagnostics = agentic_recommend_from_prompt(
+        "play something nice",
+        local_songs,
+        k=2,
+        use_external_retrieval=False,
+        confidence_threshold=0.95,
+        prefer_semantic_retrieval=False,
+    )
+
+    assert len(recommendations) == 2
+    assert diagnostics["confidence_score"] < diagnostics["confidence_threshold"]
+    assert diagnostics["follow_up_question"] is not None

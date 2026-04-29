@@ -457,3 +457,88 @@ def recommend_from_prompt(
     )
     diagnostics["derived_profile"] = profile
     return recommendations, diagnostics
+
+
+def _confidence_score(recommendations: List[Tuple[Dict[str, Any], float, str]], diagnostics: Dict[str, Any]) -> float:
+    if not recommendations:
+        return 0.0
+
+    top_score = recommendations[0][1]
+    second_score = recommendations[1][1] if len(recommendations) > 1 else max(0.0, top_score - 1.0)
+    score_gap = max(0.0, top_score - second_score)
+    candidate_ratio = diagnostics["retrieved_candidate_size"] / max(
+        diagnostics["local_catalog_size"] + diagnostics["external_catalog_size"], 1
+    )
+
+    confidence = (
+        min(top_score / 10.0, 1.0) * 0.55
+        + min(score_gap / 2.0, 1.0) * 0.30
+        + min(candidate_ratio, 1.0) * 0.15
+    )
+    return round(min(max(confidence, 0.0), 1.0), 3)
+
+
+def _generate_follow_up_question(prompt: str) -> str:
+    tokens = set(_tokenize(prompt))
+    if not any(token in MOOD_KEYWORDS for token in tokens):
+        return "Should the vibe be more chill, intense, or reflective?"
+    if not any(token in LOW_ENERGY_WORDS or token in HIGH_ENERGY_WORDS for token in tokens):
+        return "Do you want low-energy songs or high-energy songs?"
+    return "Do you prefer more acoustic tracks or more danceable tracks?"
+
+
+def agentic_recommend_from_prompt(
+    prompt: str,
+    local_songs: List[Dict[str, Any]],
+    k: int = 5,
+    use_external_retrieval: bool = True,
+    follow_up_answer: str | None = None,
+    confidence_threshold: float = 0.70,
+    prefer_semantic_retrieval: bool = True,
+    embedding_model_name: str = DEFAULT_EMBEDDING_MODEL,
+    embedder: Any | None = None,
+) -> Tuple[List[Tuple[Dict[str, Any], float, str]], Dict[str, Any]]:
+    """Run a simple plan->retrieve->rank->self-check agentic workflow."""
+    cleaned_prompt = prompt.strip()
+    if not cleaned_prompt:
+        raise ValueError("Prompt must not be empty.")
+
+    combined_prompt = cleaned_prompt
+    if follow_up_answer:
+        combined_prompt = f"{cleaned_prompt}. {follow_up_answer.strip()}"
+
+    plan_notes: List[str] = [
+        "Parse user intent into a recommendation profile.",
+        "Retrieve candidate songs from local and optional external sources.",
+        "Rank candidates and self-check recommendation confidence.",
+    ]
+    if follow_up_answer:
+        plan_notes.append("Incorporate follow-up clarification from the user.")
+
+    profile = build_profile_from_prompt(combined_prompt)
+    recommendations, diagnostics = _run_retrieval_and_ranking(
+        combined_prompt,
+        profile,
+        local_songs,
+        k=k,
+        use_external_retrieval=use_external_retrieval,
+        prefer_semantic_retrieval=prefer_semantic_retrieval,
+        embedding_model_name=embedding_model_name,
+        embedder=embedder,
+    )
+    confidence = _confidence_score(recommendations, diagnostics)
+
+    follow_up_question = None
+    if confidence < confidence_threshold and not follow_up_answer:
+        follow_up_question = _generate_follow_up_question(combined_prompt)
+
+    diagnostics.update(
+        {
+            "derived_profile": profile,
+            "agentic_plan": plan_notes,
+            "confidence_score": confidence,
+            "follow_up_question": follow_up_question,
+            "confidence_threshold": confidence_threshold,
+        }
+    )
+    return recommendations, diagnostics
