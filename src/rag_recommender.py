@@ -7,12 +7,13 @@ import importlib
 import logging
 import math
 import re
+import ssl
 from typing import Any, Callable, Dict, List, Tuple
 from urllib.error import URLError
 from urllib.parse import urlencode
 from urllib.request import urlopen
 
-from src.recommender import recommend_songs
+from src.recommender import score_song
 
 
 LOGGER = logging.getLogger(__name__)
@@ -58,6 +59,32 @@ ACOUSTIC_WORDS = {"acoustic", "unplugged", "raw"}
 DANCE_WORDS = {"dance", "party", "club"}
 ELECTRONIC_WORDS = {"electronic", "edm", "synth", "techno"}
 LYRICAL_WORDS = {"lyrical", "poetic", "storytelling", "conscious", "genius", "bars", "lyrics"}
+STRICT_ARTIST_WORDS = {"only", "just", "strictly", "specifically"}
+FOLLOW_UP_STOPWORDS = {
+    "the",
+    "this",
+    "that",
+    "with",
+    "from",
+    "your",
+    "his",
+    "her",
+    "their",
+    "song",
+    "songs",
+    "better",
+    "might",
+    "please",
+    "want",
+    "need",
+    "think",
+    "do",
+    "you",
+    "have",
+    "itunes",
+    "api",
+    "only",
+}
 
 GENRE_DEFAULTS = {
     "pop": {"mood": "happy", "energy": 0.80, "tempo_bpm": 122, "valence": 0.80, "danceability": 0.82, "acousticness": 0.20},
@@ -92,7 +119,96 @@ def _derive_mood(tokens: List[str]) -> str:
     return "chill"
 
 
-def build_profile_from_prompt(prompt: str) -> Dict[str, Any]:
+def _normalize_text(value: str) -> str:
+    return " ".join(_tokenize(value))
+
+
+def _most_frequent_value(values: List[str]) -> str | None:
+    frequency: Dict[str, int] = {}
+    for value in values:
+        cleaned_value = str(value).strip().lower()
+        if not cleaned_value:
+            continue
+        frequency[cleaned_value] = frequency.get(cleaned_value, 0) + 1
+    if not frequency:
+        return None
+    return max(frequency.items(), key=lambda item: item[1])[0]
+
+
+def _build_artist_index(songs: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    artist_index: Dict[str, Dict[str, Any]] = {}
+    for song in songs:
+        artist_name = str(song.get("artist", "")).strip()
+        if not artist_name:
+            continue
+        artist_key = _normalize_text(artist_name)
+        if not artist_key:
+            continue
+
+        entry = artist_index.setdefault(
+            artist_key,
+            {
+                "artist": artist_name,
+                "genres": [],
+                "moods": [],
+                "count": 0,
+            },
+        )
+        entry["count"] += 1
+        if song.get("genre"):
+            entry["genres"].append(str(song["genre"]))
+        if song.get("mood"):
+            entry["moods"].append(str(song["mood"]))
+    return artist_index
+
+
+def _resolve_artist_from_catalog(prompt: str, songs: List[Dict[str, Any]]) -> Dict[str, Any] | None:
+    artist_index = _build_artist_index(songs)
+    if not artist_index:
+        return None
+
+    normalized_prompt = _normalize_text(prompt)
+    prompt_tokens = set(normalized_prompt.split())
+    if not prompt_tokens:
+        return None
+
+    best_match: Dict[str, Any] | None = None
+    best_score = 0.0
+    for artist_key, metadata in artist_index.items():
+        artist_tokens = set(artist_key.split())
+        if not artist_tokens:
+            continue
+
+        if artist_key in normalized_prompt:
+            score = 1.0
+        else:
+            overlap = artist_tokens & prompt_tokens
+            overlap_ratio = len(overlap) / len(artist_tokens)
+            longest_overlap = max((len(token) for token in overlap), default=0)
+            if overlap_ratio >= 0.6:
+                score = overlap_ratio
+            elif overlap_ratio > 0 and longest_overlap >= 5:
+                score = 0.55
+            else:
+                score = 0.0
+
+        if score > best_score:
+            best_score = score
+            best_match = metadata
+
+    if best_match is None or best_score < 0.55:
+        return None
+
+    return {
+        "artist": best_match["artist"],
+        "genre": _most_frequent_value(best_match["genres"]),
+        "mood": _most_frequent_value(best_match["moods"]),
+        "match_score": round(best_score, 3),
+        "catalog_song_count": best_match["count"],
+    }
+
+
+def build_profile_from_prompt(prompt: str, artist_hint: Dict[str, Any] | None = None) -> Dict[str, Any]:
     """Build user preference targets from natural-language prompt text."""
     cleaned_prompt = prompt.strip()
     if not cleaned_prompt:
@@ -132,6 +248,10 @@ def build_profile_from_prompt(prompt: str) -> Dict[str, Any]:
     target_acousticness = 0.80 if has_acoustic else (0.20 if has_electronic else 0.50)
 
     favorite_genre = genres[0] if genres else "pop"
+    if artist_hint and artist_hint.get("genre") and not genres:
+        favorite_genre = str(artist_hint["genre"])
+    if artist_hint and artist_hint.get("mood") and mood == "chill":
+        mood = str(artist_hint["mood"])
     if has_lyrical and mood == "chill":
         mood = "reflective"
         target_valence = min(target_valence, 0.40)
@@ -149,7 +269,23 @@ def build_profile_from_prompt(prompt: str) -> Dict[str, Any]:
     }
     if len(genres) > 1:
         profile["secondary_genre"] = genres[1]
+    if artist_hint and artist_hint.get("artist"):
+        profile["target_artist"] = str(artist_hint["artist"])
+        if _is_strict_artist_request(cleaned_prompt, str(artist_hint["artist"])):
+            profile["strict_artist_match"] = True
     return profile
+
+
+def _is_strict_artist_request(prompt: str, artist_name: str) -> bool:
+    normalized_prompt = _normalize_text(prompt)
+    normalized_artist = _normalize_text(artist_name)
+    if not normalized_prompt or not normalized_artist:
+        return False
+
+    strict_cues_pattern = "|".join(sorted(STRICT_ARTIST_WORDS))
+    before_pattern = rf"\b({strict_cues_pattern})\b(?: \w+){{0,3}} {re.escape(normalized_artist)}\b"
+    after_pattern = rf"\b{re.escape(normalized_artist)}\b(?: \w+){{0,3}} ({strict_cues_pattern})\b"
+    return bool(re.search(before_pattern, normalized_prompt) or re.search(after_pattern, normalized_prompt))
 
 
 def _build_search_query(prompt: str, profile: Dict[str, Any]) -> str:
@@ -205,6 +341,25 @@ def _normalize_itunes_song(track: Dict[str, Any], song_id: int) -> Dict[str, Any
     }
 
 
+def _build_certifi_ssl_context() -> ssl.SSLContext | None:
+    """Build SSL context from certifi bundle when system certs fail."""
+    try:
+        certifi_module = importlib.import_module("certifi")
+        certifi_path = str(certifi_module.where())
+        return ssl.create_default_context(cafile=certifi_path)
+    except Exception:
+        return None
+
+
+def _load_remote_json_payload(
+    request_url: str,
+    timeout_seconds: int,
+    urlopen_fn: Callable[..., Any],
+) -> Dict[str, Any]:
+    with urlopen_fn(request_url, timeout=timeout_seconds) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
 def fetch_public_songs(
     query: str,
     limit: int = 30,
@@ -219,9 +374,26 @@ def fetch_public_songs(
     request_url = f"{ITUNES_SEARCH_URL}?{urlencode(params)}"
 
     try:
-        with urlopen_fn(request_url, timeout=timeout_seconds) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-    except (URLError, TimeoutError, json.JSONDecodeError) as exc:
+        payload = _load_remote_json_payload(request_url, timeout_seconds, urlopen_fn)
+    except URLError as exc:
+        # Common Mac/Python environment issue: missing trusted CA roots.
+        if "CERTIFICATE_VERIFY_FAILED" in str(exc):
+            ssl_context = _build_certifi_ssl_context()
+            if ssl_context is not None:
+                try:
+                    with urlopen_fn(request_url, timeout=timeout_seconds, context=ssl_context) as response:
+                        payload = json.loads(response.read().decode("utf-8"))
+                    LOGGER.info("External retrieval succeeded after certifi SSL fallback.")
+                except (URLError, TimeoutError, json.JSONDecodeError) as retry_exc:
+                    LOGGER.warning("External retrieval failed for query '%s': %s", query, retry_exc)
+                    return []
+            else:
+                LOGGER.warning("External retrieval failed for query '%s': %s", query, exc)
+                return []
+        else:
+            LOGGER.warning("External retrieval failed for query '%s': %s", query, exc)
+            return []
+    except (TimeoutError, json.JSONDecodeError) as exc:
         LOGGER.warning("External retrieval failed for query '%s': %s", query, exc)
         return []
 
@@ -338,7 +510,7 @@ def _rank_candidate_indexes(
     prefer_semantic_retrieval: bool = True,
     embedding_model_name: str = DEFAULT_EMBEDDING_MODEL,
     embedder: Any | None = None,
-) -> Tuple[List[int], Dict[str, Any]]:
+) -> Tuple[List[int], Dict[str, Any], Dict[int, float]]:
     lexical_scores = _lexical_similarity_scores(prompt, songs)
     semantic_scores: Dict[int, float] = {}
     semantic_available = False
@@ -361,18 +533,22 @@ def _rank_candidate_indexes(
         if combined_score > 0.0:
             scored_indexes.append((combined_score, index))
 
+    score_lookup: Dict[int, float] = {index: score for score, index in scored_indexes}
+
     if not scored_indexes:
         top_indexes = list(range(min(limit, len(songs))))
+        score_lookup = {index: 0.0 for index in top_indexes}
     else:
         scored_indexes.sort(key=lambda item: item[0], reverse=True)
         top_indexes = [index for _, index in scored_indexes[:limit]]
+        score_lookup = {index: score_lookup[index] for index in top_indexes}
 
     diagnostics = {
         "retrieval_strategy": "semantic+lexical" if semantic_available else "lexical",
         "semantic_model_used": semantic_available,
         "embedding_model_name": embedding_model_name if semantic_available else None,
     }
-    return top_indexes, diagnostics
+    return top_indexes, diagnostics, score_lookup
 
 
 def retrieve_candidates(
@@ -387,7 +563,7 @@ def retrieve_candidates(
     if not songs:
         return []
 
-    ranked_indexes, _ = _rank_candidate_indexes(
+    ranked_indexes, _, _ = _rank_candidate_indexes(
         prompt,
         songs,
         limit=limit,
@@ -400,38 +576,240 @@ def retrieve_candidates(
 
 def _run_retrieval_and_ranking(
     prompt: str,
-    profile: Dict[str, Any],
     local_songs: List[Dict[str, Any]],
     k: int = 5,
     use_external_retrieval: bool = True,
     prefer_semantic_retrieval: bool = True,
     embedding_model_name: str = DEFAULT_EMBEDDING_MODEL,
     embedder: Any | None = None,
+    follow_up_text: str | None = None,
 ) -> Tuple[List[Tuple[Dict[str, Any], float, str]], Dict[str, Any]]:
+    effective_prompt = prompt.strip()
+    if follow_up_text and follow_up_text.strip():
+        effective_prompt = f"{effective_prompt}. {follow_up_text.strip()}"
+
+    base_profile = build_profile_from_prompt(effective_prompt)
     external_songs: List[Dict[str, Any]] = []
+    artist_boost_songs: List[Dict[str, Any]] = []
     if use_external_retrieval:
-        query = _build_search_query(prompt, profile)
+        query = _build_search_query(effective_prompt, base_profile)
         external_songs = fetch_public_songs(query, limit=40)
 
     full_catalog = merge_song_catalogs(local_songs, external_songs)
-    candidate_indexes, retrieval_diagnostics = _rank_candidate_indexes(
-        prompt,
-        full_catalog,
+    artist_hint = _resolve_artist_from_catalog(effective_prompt, full_catalog)
+    if use_external_retrieval and artist_hint and str(artist_hint.get("artist", "")).strip():
+        artist_boost_songs = fetch_public_songs(str(artist_hint["artist"]).strip(), limit=100)
+        if artist_boost_songs:
+            full_catalog = merge_song_catalogs(full_catalog, artist_boost_songs)
+            artist_hint = _resolve_artist_from_catalog(effective_prompt, full_catalog)
+
+    profile = build_profile_from_prompt(effective_prompt, artist_hint=artist_hint)
+
+    follow_up_directives: Dict[str, List[str]] = {"avoid_titles": [], "prefer_titles": [], "prefer_terms": []}
+    if follow_up_text and follow_up_text.strip():
+        follow_up_directives = _extract_follow_up_directives(follow_up_text, full_catalog)
+        if follow_up_directives["avoid_titles"]:
+            profile["avoid_titles"] = follow_up_directives["avoid_titles"]
+        if follow_up_directives["prefer_titles"]:
+            profile["prefer_titles"] = follow_up_directives["prefer_titles"]
+        if follow_up_directives["prefer_terms"]:
+            profile["prefer_terms"] = follow_up_directives["prefer_terms"]
+
+    retrieval_pool: List[Dict[str, Any]] = full_catalog
+    target_for_strict = str(profile.get("target_artist", "")).strip().lower()
+    if profile.get("strict_artist_match") and target_for_strict:
+        artist_rows = [
+            song for song in full_catalog if target_for_strict in str(song.get("artist", "")).lower()
+        ]
+        if artist_rows:
+            retrieval_pool = artist_rows
+
+    candidate_indexes, retrieval_diagnostics, retrieval_scores = _rank_candidate_indexes(
+        effective_prompt,
+        retrieval_pool,
         limit=max(20, k * 4),
         prefer_semantic_retrieval=prefer_semantic_retrieval,
         embedding_model_name=embedding_model_name,
         embedder=embedder,
     )
-    retrieved_candidates = [full_catalog[index] for index in candidate_indexes]
-    recommendations = recommend_songs(profile, retrieved_candidates, k=k)
+    retrieved_candidates: List[Dict[str, Any]] = []
+    for index in candidate_indexes:
+        song_copy = dict(retrieval_pool[index])
+        song_copy["_retrieval_score"] = float(retrieval_scores.get(index, 0.0))
+        retrieved_candidates.append(song_copy)
+    recommendations = _recommend_songs_with_artist_priority(profile, retrieved_candidates, k=k)
 
     diagnostics = {
         "local_catalog_size": len(local_songs),
-        "external_catalog_size": len(external_songs),
+        "external_catalog_size": max(0, len(full_catalog) - len(local_songs)),
+        "external_primary_fetch_size": len(external_songs),
+        "external_artist_boost_size": len(artist_boost_songs),
         "retrieved_candidate_size": len(retrieved_candidates),
+        "artist_match_hint": artist_hint,
+        "follow_up_directives": follow_up_directives,
         **retrieval_diagnostics,
     }
-    return recommendations, diagnostics
+    return recommendations, {**diagnostics, "derived_profile": profile}
+
+
+def _extract_follow_up_directives(follow_up_text: str, songs: List[Dict[str, Any]]) -> Dict[str, Any]:
+    normalized_follow_up = _normalize_text(follow_up_text)
+    directives: Dict[str, Any] = {"avoid_titles": [], "prefer_titles": [], "prefer_terms": []}
+
+    negative_cue_pattern = r"(don t|dont|not|avoid|exclude|skip)"
+    positive_cue_pattern = r"(better|prefer|try|include|instead|replace|swap)"
+    has_negative_cue = bool(re.search(negative_cue_pattern, normalized_follow_up))
+    has_positive_cue = bool(re.search(positive_cue_pattern, normalized_follow_up))
+    looks_like_question = "?" in follow_up_text and bool(
+        re.search(r"^\s*(do|does|did|can|could|would|is|are|was|were)\b", follow_up_text.strip().lower())
+    )
+
+    # Questions like "Do you only have X?" should not mutate ranking.
+    if looks_like_question and not has_negative_cue and not has_positive_cue:
+        directives["treated_as_question_only"] = True
+        return directives
+
+    for song in songs:
+        title = str(song.get("title", ""))
+        normalized_title = _normalize_text(title)
+        if not normalized_title or normalized_title not in normalized_follow_up:
+            continue
+
+        negative_pattern = rf"{negative_cue_pattern}(?: \w+){{0,8}} {re.escape(normalized_title)}"
+        positive_pattern = rf"{positive_cue_pattern}(?: \w+){{0,8}} {re.escape(normalized_title)}"
+        has_negative = bool(re.search(negative_pattern, normalized_follow_up))
+        has_positive = bool(re.search(positive_pattern, normalized_follow_up))
+
+        if has_negative and not has_positive:
+            directives["avoid_titles"].append(normalized_title)
+        elif has_positive:
+            directives["prefer_titles"].append(normalized_title)
+
+    directives["avoid_titles"] = sorted(set(directives["avoid_titles"]))
+    directives["prefer_titles"] = sorted(set(directives["prefer_titles"]))
+
+    terms = [
+        token
+        for token in _tokenize(follow_up_text)
+        if len(token) >= 4 and token not in FOLLOW_UP_STOPWORDS
+    ]
+    directives["prefer_terms"] = sorted(set(terms))
+    directives["treated_as_question_only"] = False
+    return directives
+
+
+def compose_follow_up_assistant_reply(
+    follow_up_text: str,
+    directives: Dict[str, Any],
+    *,
+    top_titles_before: List[str] | None = None,
+    top_titles_after: List[str] | None = None,
+) -> str:
+    """Natural-language summary of how a user follow-up was interpreted (no external LLM)."""
+    cleaned = follow_up_text.strip()
+    if not cleaned:
+        return ""
+
+    parts: List[str] = []
+    if directives.get("treated_as_question_only"):
+        parts.append(
+            "Thanks for writing in. I read that as a question, not a command, "
+            "so I did not apply avoid or prefer rules automatically. "
+            "Your words were still blended into retrieval, so ordering can shift a little."
+        )
+    else:
+        fragments: List[str] = []
+        avoid = directives.get("avoid_titles") or []
+        prefer = directives.get("prefer_titles") or []
+        terms: List[str] = list(directives.get("prefer_terms") or [])
+
+        if avoid:
+            fragments.append(f"I pulled back on tracks matching: {', '.join(avoid)}.")
+        if prefer:
+            fragments.append(f"I boosted songs closer to: {', '.join(prefer)}.")
+        if terms:
+            tail = terms[:8]
+            extra = " …" if len(terms) > 8 else ""
+            if avoid or prefer:
+                fragments.append(f"I also weighted lyrics/metadata keywords: {', '.join(tail)}.{extra}")
+            else:
+                fragments.append(
+                    f"I emphasized overlap with these themes in the catalog: {', '.join(tail)}.{extra}"
+                )
+        if fragments:
+            parts.append(" ".join(fragments))
+        else:
+            parts.append(
+                "I folded your follow-up into retrieval and scoring. "
+                "I did not detect explicit avoid or prefer patterns, so any change is mostly from the extra context."
+            )
+
+    if top_titles_before is not None and top_titles_after is not None:
+        before = [t for t in top_titles_before if t]
+        after = [t for t in top_titles_after if t]
+        if before == after and before:
+            parts.append("Your top titles stayed the same this round.")
+        elif before and after:
+            parts.append(
+                f"Top list went from {', '.join(before)} to {', '.join(after)}."
+            )
+        elif after and not before:
+            parts.append(f"Here are the top picks now: {', '.join(after)}.")
+    elif top_titles_after is not None:
+        after = [t for t in top_titles_after if t]
+        if after:
+            parts.append(f"Updated top songs: {', '.join(after)}.")
+
+    return " ".join(parts)
+
+
+def _recommend_songs_with_artist_priority(
+    user_prefs: Dict[str, Any],
+    songs: List[Dict[str, Any]],
+    k: int,
+) -> List[Tuple[Dict[str, Any], float, str]]:
+    target_artist = str(user_prefs.get("target_artist", "")).strip().lower()
+    strict_artist_match = bool(user_prefs.get("strict_artist_match", False))
+    avoid_titles = set(str(value) for value in user_prefs.get("avoid_titles", []))
+    prefer_titles = set(str(value) for value in user_prefs.get("prefer_titles", []))
+    prefer_terms = set(str(value) for value in user_prefs.get("prefer_terms", []))
+    scored_recommendations: List[Tuple[Dict[str, Any], float, str]] = []
+
+    for song in songs:
+        score, reasons = score_song(user_prefs, song)
+
+        retrieval_score = float(song.get("_retrieval_score", 0.0))
+        retrieval_bonus = max(0.0, min(1.5, retrieval_score))
+        if retrieval_bonus > 0:
+            score += retrieval_bonus
+            reasons.append(f"retrieval relevance (+{retrieval_bonus:.2f})")
+
+        normalized_title = _normalize_text(str(song.get("title", "")))
+        if normalized_title and normalized_title in avoid_titles:
+            score -= 3.0
+            reasons.append("follow-up exclusion (-3.0)")
+        if normalized_title and normalized_title in prefer_titles:
+            score += 2.5
+            reasons.append("follow-up preference (+2.5)")
+        if prefer_terms:
+            document_tokens = set(_tokenize(_song_to_document(song)))
+            matched_terms = document_tokens & prefer_terms
+            if matched_terms:
+                term_bonus = min(1.5, 0.35 * len(matched_terms))
+                score += term_bonus
+                reasons.append(f"follow-up keyword match (+{term_bonus:.2f})")
+
+        if target_artist and target_artist in str(song.get("artist", "")).lower():
+            score += 3.0
+            reasons.append("requested artist match (+3.0)")
+        scored_recommendations.append((song, score, "; ".join(reasons)))
+
+    scored_recommendations.sort(key=lambda item: item[1], reverse=True)
+    if target_artist and strict_artist_match:
+        artist_only = [item for item in scored_recommendations if target_artist in str(item[0].get("artist", "")).lower()]
+        if artist_only:
+            return artist_only[:k]
+    return scored_recommendations[:k]
 
 
 def recommend_from_prompt(
@@ -442,20 +820,19 @@ def recommend_from_prompt(
     prefer_semantic_retrieval: bool = True,
     embedding_model_name: str = DEFAULT_EMBEDDING_MODEL,
     embedder: Any | None = None,
+    follow_up_text: str | None = None,
 ) -> Tuple[List[Tuple[Dict[str, Any], float, str]], Dict[str, Any]]:
     """Run prompt -> retrieval -> ranking -> explanation pipeline."""
-    profile = build_profile_from_prompt(prompt)
     recommendations, diagnostics = _run_retrieval_and_ranking(
         prompt,
-        profile,
         local_songs,
         k=k,
         use_external_retrieval=use_external_retrieval,
         prefer_semantic_retrieval=prefer_semantic_retrieval,
         embedding_model_name=embedding_model_name,
         embedder=embedder,
+        follow_up_text=follow_up_text,
     )
-    diagnostics["derived_profile"] = profile
     return recommendations, diagnostics
 
 
@@ -503,10 +880,6 @@ def agentic_recommend_from_prompt(
     if not cleaned_prompt:
         raise ValueError("Prompt must not be empty.")
 
-    combined_prompt = cleaned_prompt
-    if follow_up_answer:
-        combined_prompt = f"{cleaned_prompt}. {follow_up_answer.strip()}"
-
     plan_notes: List[str] = [
         "Parse user intent into a recommendation profile.",
         "Retrieve candidate songs from local and optional external sources.",
@@ -515,26 +888,24 @@ def agentic_recommend_from_prompt(
     if follow_up_answer:
         plan_notes.append("Incorporate follow-up clarification from the user.")
 
-    profile = build_profile_from_prompt(combined_prompt)
     recommendations, diagnostics = _run_retrieval_and_ranking(
-        combined_prompt,
-        profile,
+        cleaned_prompt,
         local_songs,
         k=k,
         use_external_retrieval=use_external_retrieval,
         prefer_semantic_retrieval=prefer_semantic_retrieval,
         embedding_model_name=embedding_model_name,
         embedder=embedder,
+        follow_up_text=follow_up_answer,
     )
     confidence = _confidence_score(recommendations, diagnostics)
 
     follow_up_question = None
     if confidence < confidence_threshold and not follow_up_answer:
-        follow_up_question = _generate_follow_up_question(combined_prompt)
+        follow_up_question = _generate_follow_up_question(cleaned_prompt)
 
     diagnostics.update(
         {
-            "derived_profile": profile,
             "agentic_plan": plan_notes,
             "confidence_score": confidence,
             "follow_up_question": follow_up_question,

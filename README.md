@@ -1,200 +1,249 @@
-# 🎵 Music Recommender Simulation
+# Music Recommender: Rules-Based Core + Prompt-Driven RAG
 
-## Project Summary
+## Repository
 
-This project builds a CLI-first music recommender that scores songs from a CSV catalog against different user taste profiles. It uses genre, mood, energy, tempo, valence, danceability, and acousticness to rank songs and explain why they matched.
-
-The project now also includes a prompt-based RAG pipeline: users can describe what they feel like listening to in natural language, the app retrieves candidates from a public music source (iTunes Search API) plus the local CSV catalog, applies semantic retrieval with a pretrained embedding model, and then generates grounded top-k recommendations using the shared ranking engine.
+**GitHub:** https://github.com/samrakshanadhikari/-applied-ai-system-project
 
 ---
 
-## How The System Works
+## Original project (Modules 1–3)
 
-Real-world recommendation systems often combine large amounts of user behavior data, such as likes, skips, playlists, and listening history, with content information about the songs themselves. At scale, platforms like Spotify or YouTube may use collaborative filtering to learn from patterns across many users and content-based filtering to compare item attributes. My simulation focuses on the content-based side: it compares a user's preferred music traits to each song's attributes, gives higher scores to songs that are closer to the user's preferred vibe, and then ranks songs from best match to worst match.
+**Repository name:** [samrakshanadhikari / **ai110-module3show-musicrecommendersimulation-starter**](https://github.com/samrakshanadhikari/ai110-module3show-musicrecommendersimulation-starter) (CodePath module 3 showpiece—**Music Recommender Simulation** starter, extended locally).
 
-Features used in this simulation:
+**What it did (2–3 sentences):** That project was a **CLI-first, content-based recommender**. It loaded songs from **`data/songs.csv`**, compared each track to several **fixed taste profiles** (genre, mood, energy, tempo, valence, danceability, acousticness), computed a **weighted total score** plus a **short explanation** for every song, and printed the **top-k** recommendations. The goal was to learn how transparent scoring rules behave across different listeners—not to build a production recommender.
 
-- `Song` features: `genre`, `mood`, `energy`, `tempo_bpm`, `valence`, `danceability`, `acousticness`
-- `UserProfile` features: `favorite_genre`, `secondary_genre`, `favorite_mood`, `target_energy`, `target_tempo_bpm`, `target_valence`, `target_danceability`, `target_acousticness`
-
-The recommender now supports two integrated workflows:
-
-- **Profile evaluation mode**: tests multiple profiles, including reflective hip-hop and folk, high-energy pop, chill lofi, deep intense rock, and one contradictory edge case.
-- **Prompt-based RAG mode**: takes a free-text request (for example, "calm acoustic songs for study"), derives a profile, retrieves candidates from external + local sources, fuses semantic + lexical similarity, and ranks the top matches.
-- **Optional agentic mode**: runs a plan -> retrieve -> rank -> self-check cycle and asks a follow-up question if confidence is low.
-
-For each workflow, it calculates a score for candidate songs and returns the top `k` songs with the highest scores.
-
-### Prompt-Based RAG Flow
-
-```mermaid
-flowchart LR
-    A[User prompt] --> B[Parse intent into profile targets]
-    B --> C[Retrieve songs from iTunes API and local CSV]
-    C --> D[Semantic and lexical retrieval fusion]
-    D --> E[Score and rank with shared recommender]
-    E --> F[Self-check confidence and optional follow-up]
-    F --> G[Return top-k songs with explanations]
-```
-
-### Data Flow
-
-```mermaid
-flowchart LR
-    A[User Preferences] --> B[Load songs from songs.csv]
-    B --> C[Loop through each song]
-    A --> C
-    C --> D[Check genre and mood matches]
-    C --> E[Measure closeness for energy tempo valence danceability acousticness]
-    D --> F[Combine weighted points into one total score]
-    E --> F
-    F --> G[Store song with score and explanation]
-    G --> H[Sort all songs by score]
-    H --> I[Return Top K recommendations]
-```
-
-### Algorithm Recipe
-
-- `+2.0` points for a match with `favorite_genre`
-- `+1.0` point for a match with `secondary_genre`
-- `+1.5` points for a match with `favorite_mood`
-- Up to `+2.0` points for how close the song's `energy` is to `target_energy`
-- Up to `+1.5` points for how close `tempo_bpm` is to `target_tempo_bpm`
-- Up to `+1.5` points for how close `valence` is to `target_valence`
-- Up to `+1.0` point for how close `danceability` is to `target_danceability`
-- Up to `+1.0` point for how close `acousticness` is to `target_acousticness`
-
-For the numerical features, the scoring rule rewards closeness rather than simply giving more credit to larger values. A song gets more points when its feature value is nearer to the user's target value, and fewer points when it is farther away. After every song receives a total score, the system applies a ranking rule by sorting the catalog from highest score to lowest score and recommending the top results.
-
-### Potential Biases
-
-- This system may over-prioritize genre and miss songs from other genres that still match the user's mood and vibe.
-- A fixed user profile can be too static, even though real musical taste changes across time, context, and emotion.
-- The dataset is small, so the recommender can only choose from a narrow slice of music.
-- The system does not understand lyrics, storytelling, or personal meaning, which matter a lot for songs like reflective hip-hop and folk.
+**This final repo** keeps that scoring core (`src/recommender.py`, `python -m src.main` profile demo) and extends it with **RAG**, **Streamlit**, **agentic** self-check, and **tests** described below.
 
 ---
 
-## Getting Started
+## Title and summary: what this does and why it matters
 
-### Setup
+**What it does today:** Users describe what they want in **natural language** (or use the original **profile demo**). The system **retrieves** relevant tracks from a **merged catalog** (local CSV + **iTunes Search API**), **shortlists** candidates with **hybrid retrieval** (pretrained **sentence-transformer** embeddings plus lexical overlap), then **ranks** them with the same transparent scoring engine and returns **top-k songs with explanations**. An optional **agentic** layer **estimates confidence** and can **ask a clarifying question** or accept **follow-up** text; the UI can show a short **assistant summary** of how follow-up was interpreted.
 
-1. Create a virtual environment (optional but recommended):
+**Why it matters:** It demonstrates an **applied AI** pattern suitable for portfolios and interviews—**retrieval-augmented** recommendations (answers grounded in fetched catalog data), **guardrails** (validation, logging, fallbacks), **testability**, and **explainability**—without claiming to train a custom generative model.
+
+---
+
+## Architecture overview
+
+The **system diagram** below is the main map of the codebase: **humans** enter prompts and settings through **Streamlit** or the **CLI**; **intent** becomes a numeric profile; **retrieval** expands beyond the tiny CSV using a public API and **deduplication**; **hybrid** retrieval fuses semantics and keywords; **ranking** adds retrieval bonuses, **artist preference**, and optional **follow-up directives**; an optional **agent** runs **plan → retrieve → rank → self-check** and may surface uncertainty through a **follow-up question**. **pytest** provides automated regression checks.
+
+The **Mermaid diagram** below satisfies the “architecture in README” requirement. **Optionally** also save a PNG into **`assets/system-architecture.png`** for slides or graders who want an image file—copy [`assets/MERMAID_ARCHITECTURE_FOR_EXPORT.mmd`](assets/MERMAID_ARCHITECTURE_FOR_EXPORT.mmd) into [Mermaid Live](https://mermaid.live) and export.
+
+```mermaid
+flowchart TB
+    subgraph Human["Human in the loop"]
+        H1[Prompt + optional follow-up text]
+        H2[Settings: Top K, external API, agentic threshold]
+        H3[Judgment: read scores, explanations, assistant reply]
+    end
+
+    subgraph Entry["Entry points"]
+        UI[Streamlit — streamlit_app.py]
+        CLI[CLI — main.py]
+    end
+
+    subgraph RAG["Retriever + ranker — rag_recommender.py"]
+        direction TB
+        INTENT[Intent / profile builder]
+        FETCH[Public retriever — iTunes Search API]
+        LOCAL[Local catalog — data/songs.csv]
+        MERGE[Merge + artist-focused fetch]
+        HYBRID[Hybrid retriever — semantic + lexical]
+        SHORT[Candidate shortlist]
+        RANK[Ranker — score_song + bonuses]
+    end
+
+    subgraph Agent["Agentic workflow — optional"]
+        PLAN[Plan: parse → retrieve → rank → self-check]
+        CONF[Confidence evaluator]
+        ASK[Low confidence → follow-up question]
+    end
+
+    subgraph Out["Output"]
+        TOP[Top-k songs + explanations]
+        REPLY[Assistant reply on follow-up]
+    end
+
+    subgraph QA["Testing"]
+        PY[pytest — tests/]
+    end
+
+    H1 --> UI
+    H1 --> CLI
+    H2 --> UI
+    UI --> INTENT
+    CLI --> INTENT
+    LOCAL --> MERGE
+    FETCH --> MERGE
+    INTENT --> FETCH
+    INTENT --> MERGE
+    MERGE --> HYBRID
+    HYBRID --> SHORT
+    SHORT --> RANK
+    RANK --> TOP
+    RANK --> PLAN
+    PLAN --> CONF
+    CONF --> ASK
+    RANK -.->|follow-up applied| REPLY
+    ASK -.->|human answers| H1
+    TOP --> H3
+    REPLY --> H3
+    PY -.->|regression checks| RAG
+```
+
+**Code map:** `src/recommender.py` (CSV + `score_song`), `src/rag_recommender.py` (RAG + agentic), `src/streamlit_app.py` (UI), `src/main.py` (CLI). Logs: `logs/app.log`.
+
+---
+
+## Setup instructions
+
+1. **Clone** this repo and `cd` into it.
+
+2. **Virtual environment** (recommended):
 
    ```bash
    python -m venv .venv
-   source .venv/bin/activate      # Mac or Linux
-   .venv\Scripts\activate         # Windows
+   source .venv/bin/activate
+   ```
 
-2. Install dependencies
+   Windows: `.venv\Scripts\activate`
 
-```bash
-pip install -r requirements.txt
-```
+3. **Install:**
 
-3. Run the original profile demo:
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-```bash
-python -m src.main
-```
+4. **Optional — SSL (some macOS/Python installs):** if iTunes calls fail with certificate errors:
 
-4. Run prompt-based RAG mode:
+   ```bash
+   export SSL_CERT_FILE=$(python -c "import certifi; print(certifi.where())")
+   export REQUESTS_CA_BUNDLE="$SSL_CERT_FILE"
+   ```
 
-```bash
-python -m src.main --prompt "I want calm acoustic songs for late-night focus"
-```
+5. **Verify tests:**
 
-5. Run prompt mode interactively:
-
-```bash
-python -m src.main --interactive
-```
-
-6. Run agentic mode with semantic retrieval:
-
-```bash
-python -m src.main --interactive --agentic
-```
-
-7. Local-only fallback (disable external retrieval):
-
-```bash
-python -m src.main --prompt "happy workout pop tracks" --no-external
-```
-
-8. Lexical-only retrieval fallback (disable embeddings):
-
-```bash
-python -m src.main --prompt "lyrical rap songs" --lexical-only
-```
-
-### Running Tests
-
-Run the starter tests with:
-
-```bash
-pytest
-```
-
-You can add more tests in `tests/test_recommender.py`.
-
-RAG pipeline tests live in `tests/test_rag_recommender.py`.
-
-### Logging and Guardrails
-
-- Runtime logs are written to `logs/app.log`.
-- Empty prompt input is rejected with a clear error message.
-- External retrieval failures are handled safely; the app falls back to local data instead of crashing.
-- If semantic model loading fails, retrieval falls back to lexical matching.
-- Agentic mode asks follow-up clarification when confidence is below threshold.
+   ```bash
+   pytest
+   ```
 
 ---
 
-## Experiments You Tried
+## Running the system
 
-- Tested five profiles: Reflective Hip-Hop / Folk, High-Energy Pop, Chill Lofi, Deep Intense Rock, and a Contradictory Edge Case.
-- Ran a weight-shift experiment where genre was cut in half and energy was doubled for the High-Energy Pop profile.
-- Compared whether the results felt intuitive or if the scoring logic could be tricked by conflicting preferences.
+| Mode | Command |
+|------|---------|
+| **Web UI** | `streamlit run src/streamlit_app.py` |
+| **Profile demo** (Modules 1–3) | `python -m src.main` |
+| **Single prompt** | `python -m src.main --prompt "I want calm acoustic songs for late-night focus"` |
+| **Interactive** | `python -m src.main --interactive` |
+| **Agentic CLI** | `python -m src.main --interactive --agentic` |
+| **Local only** | add `--no-external` |
+| **Lexical only** (no embeddings) | add `--lexical-only` |
 
 ---
 
-## Limitations and Risks
+## Sample interactions
 
-- It only works on a tiny catalog, so some profiles will see the same songs repeatedly.
-- Genre bonuses can overpower other signals, especially for edge-case users.
-- It does not understand lyrics, storytelling, or personal associations with songs.
+*Live iTunes titles vary by region; local CSV rows are fixed.*
 
-You will go deeper on this in your model card.
+1. **Study / calm:** Prompt: *“I need calm acoustic music for studying.”* → Derived profile favors low energy / higher acousticness; top picks often include lofi/folk-like CSV rows with clear explanation strings.
+
+2. **Artist + vibe:** Prompt: *“I want Eminem struggling songs.”* → Many **Eminem** tracks after merge; explanations show **requested artist match** and **retrieval relevance**; agent may ask for **chill vs intense vs reflective** if confidence is low.
+
+3. **Follow-up:** Prompt: *“I need J Cole love songs”* + follow-up: *“I don’t think Intro is his love song. Prefer She’s Mine.”* → Parsed avoid/prefer → **assistant reply** + **re-ranked** list.
+
+---
+
+## Design decisions and trade-offs
+
+| Decision | Rationale | Trade-off |
+|----------|-----------|-----------|
+| **RAG, not custom training** | Credible for coursework; retrieval-grounded answers | Depends on API + catalog |
+| **Hybrid semantic + lexical** | Robust for names and rare words | More tuning surface |
+| **Rule-based intent** | Explainable | Misses subtle emotion without more vocabulary |
+| **iTunes** | Free, broad | Metadata ≠ perfect mood labels |
+| **Agent = confidence + question** | Self-check without tool sprawl | Not a full autonomous agent |
+
+---
+
+## Reliability and evaluation
+
+### Testing summary
+
+- **What worked:** **`pytest`** (**17 / 17** tests) covers CSV scoring, prompt → profile, **hybrid** retrieval with a **stub** embedder, **mocked** iTunes payloads, artist prioritization, follow-up directives, question-style follow-ups, strict-artist enrichment, and **agentic** low-confidence paths. End-to-end **Streamlit** and **CLI** runs match expectations when external retrieval and SSL are healthy.
+
+- **What didn’t / was brittle:** **SSL certificate** trust on some Mac/Python installs broke iTunes calls until **certifi** or env vars fixed it. **Live iTunes** results vary by **region** and time—tests avoid asserting exact titles. **Intent + follow-up** parsing needed several iterations (e.g. questions mistaken for commands, **“only artist”** with a thin catalog).
+
+- **What I learned:** Most “AI” failures were **data + intent** issues, not the embedding math—**logging**, **diagnostics in the UI**, and **regression tests** matter as much as model choice.
+
+**More detail:** **Confidence** (~0.5–0.9 typical) blends top-score strength, margin to #2, and shortlist depth; **vague** prompts often fall **below** the default **0.70** threshold → **follow-up**. **Guardrails:** empty prompt rejection; API/SSL/embed fallbacks; `logs/app.log`; Streamlit error handling.
 
 ---
 
 ## Reflection
 
-Read `model_card.md` and `reflection.md`:
+**What this project taught me about AI and problem-solving:** “AI” here was mostly **orchestration**—retrieval, rules, and **explainable** scoring—rather than training a giant model from scratch. The hard part was making **language** (prompts and follow-ups) line up with **behavior** users expect. I learned that **edge cases** expose design flaws faster than averages, and that **tests + logs + a UI** turn those edge cases into fixes instead of mysteries.
 
-[**Model Card**](model_card.md)
-[**Reflection Notes**](reflection.md)
-
-Building the recommender made it much easier to see how recommendation systems turn preference data into rankings. A few carefully chosen weights can make the results feel smart for normal users, but edge cases quickly show where the logic is brittle.
-
-The most important lesson from Phase 4 was that explanation matters. When the CLI prints the score and the reasons, it becomes much easier to see why a song ranked highly and where the recommender may be biased or overly rigid.
-
+**Responsible AI** (limitations, misuse, collaboration): **[reflection.md](reflection.md)**. Limitations, bias, evaluation: **[model_card.md](model_card.md)**.
 
 ---
 
-## Example Terminal Output
+## Presentation and portfolio
 
-This screenshot shows the recommender running in the terminal.
+### Loom walkthrough (required for grading)
 
-![Terminal output](images/recommender-output.png)
+**Your recording:** [Add your Loom link here](https://www.loom.com/share/REPLACE_ME)
 
-## Evaluation Screenshots
+**What the video should show (per rubric):** *No installation or file-tree tour required.*
 
-This first screenshot shows the recommender output through the Chill Lofi profile.
+| Must show | Suggestion |
+|-----------|------------|
+| **End-to-end run, 2–3 inputs** | e.g. calm study prompt → artist prompt → follow-up refinement in Streamlit |
+| **AI feature behavior** | Call out **RAG** (external + local), **hybrid retrieval**, and **agentic** confidence + follow-up |
+| **Reliability / evaluation** | e.g. **confidence** below threshold + question, empty prompt warning, or toggle **local-only** after describing fallback |
+| **Clear outputs** | Zoom **derived profile**, **top matches + explanations**, and **diagnostics** (external count, retrieval strategy) |
 
-![Evaluation output part 1](images/evaluation-part1.png)
+Keep total length **about 5–7 minutes** for a live presentation companion.
 
-This second screenshot shows the Deep Intense Rock profile and the remaining evaluation output.
+### What this project says about me as an AI engineer
 
-![Evaluation output part 2](images/evaluation-part2.png)
+I care about **systems that can be trusted and debugged**: I grounded recommendations in **retrieval**, added **tests** for the tricky parsing and ranking paths, and shipped a **UI** so non-developers can stress the same flows. I’m comfortable combining **pretrained models** with **rules and guardrails**, and I default to **measuring and logging** instead of assuming the demo always works.
 
+### Submission checklist
+
+- [ ] Code pushed to the correct **public** GitHub repo: https://github.com/samrakshanadhikari/-applied-ai-system-project
+- [ ] Functional code, **README.md**, **model_card.md**, architecture diagram (**in README and/or** `assets/system-architecture.png`).
+- [ ] **`assets/`** populated (screenshots + optional `system-architecture.png`; see [`assets/SUBMISSION_CHECKLIST.md`](assets/SUBMISSION_CHECKLIST.md)).
+- [ ] **Loom** link in README replaces `REPLACE_ME` and covers **all** rubric bullets.
+- [ ] **Meaningful commit history** (feature-sized commits, not one giant dump).
+- [ ] **model_card.md** addresses **AI collaboration**, **biases**, and **testing** (see updated sections there).
+- [ ] Final push before the deadline.
+
+---
+
+## Appendix: scoring recipe (content-based core)
+
+- `+2.0` favorite genre · `+1.0` secondary · `+1.5` mood · up to `+2.0` energy · up to `+1.5` tempo · up to `+1.5` valence · up to `+1.0` danceability · up to `+1.0` acousticness. RAG adds retrieval, artist, and follow-up bonuses.
+
+### Legacy flow (profile-only)
+
+```mermaid
+flowchart LR
+    A[User Preferences] --> B[songs.csv]
+    B --> C[Score each song]
+    C --> D[Sort, return top-k]
+```
+
+### Screenshots (`assets/`)
+
+Static demos (also show 2–3 live inputs in your **Loom**).
+
+![System architecture (exported PNG)](assets/system-architecture.png)
+
+![Terminal output](assets/recommender-output.png)
+
+![Evaluation 1](assets/evaluation-part1.png)
+
+![Evaluation 2](assets/evaluation-part2.png)

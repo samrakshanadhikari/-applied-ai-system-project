@@ -10,6 +10,7 @@ from typing import Any, Dict
 from src.rag_recommender import (
     DEFAULT_EMBEDDING_MODEL,
     agentic_recommend_from_prompt,
+    compose_follow_up_assistant_reply,
     recommend_from_prompt,
 )
 from src.recommender import load_songs, recommend_songs
@@ -156,6 +157,7 @@ def run_prompt_mode(
             use_external_retrieval=use_external_retrieval,
             prefer_semantic_retrieval=prefer_semantic_retrieval,
             embedding_model_name=embedding_model_name,
+            follow_up_text=follow_up_answer,
         )
 
     print("\n=== Prompt-Based Recommendation (RAG Pipeline) ===")
@@ -181,6 +183,14 @@ def run_prompt_mode(
             print(f" - {step}")
         if diagnostics.get("follow_up_question"):
             print(f"Agent follow-up: {diagnostics['follow_up_question']}")
+
+    if follow_up_answer and follow_up_answer.strip():
+        assistant_reply = compose_follow_up_assistant_reply(
+            follow_up_answer.strip(),
+            diagnostics.get("follow_up_directives", {}),
+            top_titles_after=[r[0].get("title", "") for r in recommendations[:top_k]],
+        )
+        print(f"\nAssistant reply:\n{assistant_reply}\n")
 
     print_recommendations("Top matches", recommendations)
     LOGGER.info("Prompt mode completed successfully.")

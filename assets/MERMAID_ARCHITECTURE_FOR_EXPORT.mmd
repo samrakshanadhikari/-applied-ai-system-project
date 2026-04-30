@@ -1,0 +1,61 @@
+%% Paste this entire file into https://mermaid.live → Export PNG → save as assets/system-architecture.png
+
+flowchart TB
+    subgraph Human["Human in the loop"]
+        H1[Prompt + optional follow-up text]
+        H2[Settings: Top K, external API, agentic threshold]
+        H3[Judgment: read scores, explanations, assistant reply]
+    end
+
+    subgraph Entry["Entry points"]
+        UI[Streamlit — streamlit_app.py]
+        CLI[CLI — main.py]
+    end
+
+    subgraph RAG["Retriever + ranker — rag_recommender.py"]
+        direction TB
+        INTENT[Intent / profile builder]
+        FETCH[Public retriever — iTunes Search API]
+        LOCAL[Local catalog — data/songs.csv]
+        MERGE[Merge + artist-focused fetch]
+        HYBRID[Hybrid retriever — semantic + lexical]
+        SHORT[Candidate shortlist]
+        RANK[Ranker — score_song + bonuses]
+    end
+
+    subgraph Agent["Agentic workflow — optional"]
+        PLAN[Plan: parse → retrieve → rank → self-check]
+        CONF[Confidence evaluator]
+        ASK[Low confidence → follow-up question]
+    end
+
+    subgraph Out["Output"]
+        TOP[Top-k songs + explanations]
+        REPLY[Assistant reply on follow-up]
+    end
+
+    subgraph QA["Testing"]
+        PY[pytest — tests/]
+    end
+
+    H1 --> UI
+    H1 --> CLI
+    H2 --> UI
+    UI --> INTENT
+    CLI --> INTENT
+    LOCAL --> MERGE
+    FETCH --> MERGE
+    INTENT --> FETCH
+    INTENT --> MERGE
+    MERGE --> HYBRID
+    HYBRID --> SHORT
+    SHORT --> RANK
+    RANK --> TOP
+    RANK --> PLAN
+    PLAN --> CONF
+    CONF --> ASK
+    RANK -.->|follow-up applied| REPLY
+    ASK -.->|human answers| H1
+    TOP --> H3
+    REPLY --> H3
+    PY -.->|regression checks| RAG

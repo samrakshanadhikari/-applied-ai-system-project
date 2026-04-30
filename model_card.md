@@ -51,3 +51,29 @@ I would improve the model by adding more songs and more kinds of genres so the o
 ## 9. Personal Reflection
 
 This project made recommendation systems feel much more understandable because I could see how a few weights and feature comparisons turn into a ranked list. What surprised me most was that a scoring rule can look reasonable on normal profiles but still behave strangely on edge cases. It also reminded me that human judgment still matters, because musical taste depends on memory, lyrics, and context in ways that a simple scoring formula cannot fully capture.
+
+---
+
+## 10. RAG, retrieval, and extended system (final project)
+
+The final artifact adds **natural-language prompts**, **iTunes Search API** retrieval merged with the CSV, **sentence-transformer** embeddings (with lexical fallback), optional **strict artist** filtering, **follow-up** parsing, and a lightweight **agentic** self-check (**confidence score** + clarifying question). Songs are still scored with the **same explainable** feature engine; retrieval changes **which candidates** enter the shortlist.
+
+---
+
+## 11. AI collaboration (how I built this responsibly)
+
+I used **AI coding assistants** to speed up boilerplate, sketch tests, and explore edge cases (for example SSL failures and Streamlit import paths). I treated suggestions as **drafts**: I still **read diffs**, ran **`pytest`**, and **reproduced bugs** in the real app—especially around “only artist” prompts and follow-up questions. Documentation here states **limits** explicitly so tooling does not blur accountability for what was verified versus assumed.
+
+---
+
+## 12. Biases and risks (including RAG)
+
+Beyond the original catalog biases, **external retrieval** inherits **Apple/iTunes** catalog skew (commercial availability, region). **Embeddings** can favor phrasing similar to pretraining and may miss emotional nuance. **Intent rules** map words to moods/genres imperfectly. **Strict artist** mode can return few tracks if the merged pool is thin. **Logs and tests** catch many failures but do not fix representation gaps in metadata.
+
+---
+
+## 13. Testing results (summary)
+
+**Automated:** `pytest` — **17** tests covering CSV scoring, prompt profiles, hybrid retrieval with a **stub** embedder, mocked iTunes payloads, artist prioritization, follow-up directives, question-style follow-ups, strict-artist enrichment, and agentic low-confidence behavior. Tests do **not** assert exact live iTunes titles. **Human:** manual Streamlit/CLI runs drove fixes later encoded as regression tests. **Confidence:** a **heuristic** self-score to surface uncertainty—not a calibrated accuracy metric.
+
+---
