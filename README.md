@@ -194,7 +194,7 @@ flowchart TB
 
 ### Loom walkthrough (required for grading)
 
-**Your recording:** [Add your Loom link here](https://www.loom.com/share/REPLACE_ME)
+**My recording:** [Watch my demo](https://www.loom.com/share/e404dd2a655e4ea2bd218a88c36d0d38)
 
 **What the video should show (per rubric):** *No installation or file-tree tour required.*
 
@@ -216,7 +216,7 @@ I care about **systems that can be trusted and debugged**: I grounded recommenda
 - [ ] Code pushed to the correct **public** GitHub repo: https://github.com/samrakshanadhikari/-applied-ai-system-project
 - [ ] Functional code, **README.md**, **model_card.md**, architecture diagram (**in README and/or** `assets/system-architecture.png`).
 - [ ] **`assets/`** populated (screenshots + optional `system-architecture.png`; see [`assets/SUBMISSION_CHECKLIST.md`](assets/SUBMISSION_CHECKLIST.md)).
-- [ ] **Loom** link in README replaces `REPLACE_ME` and covers **all** rubric bullets.
+- [ ] **Loom** link in README is set and covers **all** rubric bullets.
 - [ ] **Meaningful commit history** (feature-sized commits, not one giant dump).
 - [ ] **model_card.md** addresses **AI collaboration**, **biases**, and **testing** (see updated sections there).
 - [ ] Final push before the deadline.
